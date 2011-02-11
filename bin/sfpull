@@ -1,6 +1,6 @@
 #!/bin/sh
 # -*- tcl -*- \
-exec tclsh "$0" ${1+"$@"}
+exec tclsh8.5 "$0" ${1+"$@"}
 # ### ### ### ######### ######### #########
 ## (C) 2009 ActiveState Software Inc.
 #
@@ -41,7 +41,7 @@ package require http 2.7         ; # (Core) Retrieve urls, post forms ...
 package require textutil::adjust ; # (Tcllib) support for json generator code
 package require tls              ; # Secure connections (https).
 package require autoproxy
-
+package require tdom
 
 #puts [package ifneeded http [package present http]]
 #proc http::Log {args} { puts HTTP:\ [join $args] }
@@ -52,7 +52,7 @@ proc main {} {
     initialize;# Required for verify_project, in the commandline.
     if {![commandline]} usage
     save_config \
-	[pull_tracker] \
+	[pull_attachments [pull_tracker]] \
 	[pull_mailinglists] \
 	[pull_website] \
 	[pull_repository]
@@ -102,6 +102,8 @@ proc save_config {tracker mlists website repository} {
 
     global thedestination theproject thepid therepotype theuser
 
+    foreach {tracker attachments} $tracker break
+
     set tmp {}
     foreach {name archive} $mlists {
 	lappend tmp $name [JsonString $archive]
@@ -119,6 +121,7 @@ proc save_config {tracker mlists website repository} {
 	     origin-id      [JsonString $thepid] \
 	     exporter       [JsonString $theuser] \
 	     tracker        [JsonString $tracker] \
+	     attachments    [JsonString $attachments] \
 	     mailinglists   [JsonObjectDict $mlists] \
 	     website        [JsonString $website] \
 	     repository     [JsonObject \
@@ -131,6 +134,7 @@ proc save_config {tracker mlists website repository} {
 
 proc pull_tracker {} {
     global thepid
+    variable attachments
 
     log Retrieving tracker information...
 
@@ -140,6 +144,69 @@ proc pull_tracker {} {
     pull-with-cookie-login $src $dst
 
     return $dst
+}
+
+proc pull_attachments {dst} {
+    variable attachments
+
+    # Now parse the tracker information, find all the referenced
+    # attachments, and pull them as well. This code written originally
+    # by Kevin Kenny (scanexport.tcl).
+
+    log Searching for tracker attachments...
+    log_barber_pole_start
+
+    xml::parser theparser -namespace -final 1 \
+	-elementstartcommand  track_startElement \
+	-characterdatacommand track_charData \
+	-elementendcommand    track_endElement
+
+    set attachments {}
+    set tree        {ROOT}
+    theparser parsefile [dest $dst]
+
+    log_barber_pole_done
+
+    log Retrieving tracker attachments...
+
+    set total [llength $attachments]
+    set an 0
+    set missing 0
+
+    log_progress_start
+    foreach a $attachments {
+	incr an
+	log_progress {} $total $an
+
+	set ticket [dict get $a ticket]
+	set base   [dict get $a url]
+	set id     [dict get $a id]
+	set fname  [dict get $a filename]
+
+	set dst Attachments/file.$id
+
+	set uri $base$ticket
+##	puts -nonewline stderr "\nRetrieving $uri..."
+	flush stderr
+	set token [http::geturl $uri]
+	if {[http::error $token] ne {}} {
+	    incr missing
+	    puts stderr "\nERROR RETRIEVING $uri: [http::error $token]"
+	    puts stderr "Attachment $filename to $ticket will not be included"
+	} else {
+##	    puts stderr ok
+	    file mkdir [file dirname [dest $dst]]
+	    fileutil::writeFile $dst [http::data $token]
+	}
+	http::cleanup $token
+    }
+
+    if {$missing} {
+	log_progress_done_err "$total/missing $missing"
+    } else {
+	log_progress_done $total
+    }
+    return [list $dst Attachments]
 }
 
 proc pull_mailinglists {} {
@@ -276,6 +343,152 @@ proc pull_repository {} {
 }
 
 # ### ### ### ######### ######### #########
+## This code originally written by Kevin Kenny (scanexport.tcl). Here
+## in sfpull it has been reduced to get only the data needed to
+## retrieve all ticket attachments.
+
+# startElement --
+#
+#	Callback executed at the start of any XML element in the
+#	SourceForge export
+#
+# Parameters:
+#	name - Element name
+#	attlist - List of attributes attached to the element.
+
+proc track_startElement {name attlist} {
+    variable curAttachmentFields
+    variable tree
+    variable chardata
+
+    set chardata {}
+    lappend tree $name
+
+    log_barber_pole
+
+    contextmatch {
+	{tracker_item attachments attachment} {
+	    # Start of an attachment - clear the fields
+	    set curAttachmentFields {}
+	}
+    }
+}
+
+# charData --
+#
+#	Callback for character data in the XML
+#
+# Parameters:
+#	data - Data to include in the enclosing element.
+#
+# Results:
+#	None.
+
+proc track_charData {data} {
+    variable chardata
+    append chardata $data
+}
+
+# endElement --
+#
+#	Callback for the end of an element
+#
+# Parameters:
+#	name - Name of the element being ended.
+#
+# Results:
+#	None.
+
+proc track_endElement {name} {
+
+    variable tree
+    variable chardata
+    variable curAttachmentFields
+    variable attachments
+    variable curTicket
+
+    contextmatch {
+	{tracker_item id} {
+	    # Ticket ID - stash for use in attachments.
+	    set curTicket $chardata
+	}
+	{tracker_item attachments attachment url} {
+	    # URL (incorrect, but fixable) of an attachment
+	    dict set curAttachmentFields url $chardata
+	}
+	{tracker_item attachments attachment id} {
+	    # Integer ID of an attachment
+	    dict set curAttachmentFields id $chardata
+	}
+	{tracker_item attachments attachment filename} {
+	    # File name of an attachment
+	    dict set curAttachmentFields filename $chardata
+	}
+	{tracker_item attachments attachment description} {
+	    # Human readable description of an attachment
+	    dict set curAttachmentFields description $chardata
+	}
+	{tracker_item attachments attachment filesize} {
+	    # File size of an attachment
+	    dict set curAttachmentFields filesize $chardata
+	}
+	{tracker_item attachments attachment filetype} {
+	    # File type of an attachment
+	    dict set curAttachmentFields filetype $chardata
+	}
+	{tracker_item attachments attachment date} {
+	    # Date (seconds from Unix epoch) of an attachment
+	    dict set curAttachmentFields date $chardata
+	}
+	{tracker_item attachments attachment submitter} {
+	    # User that submitted an attachment
+	    dict set curAttachmentFields submitter $chardata
+	}
+	{tracker_item attachments attachment} {
+	    # End of an attachment
+	    dict set curAttachmentFields ticket $curTicket
+	    lappend attachments $curAttachmentFields
+	}
+	{document} {
+#	    puts "Trackers: $trackers"
+	}
+    }
+    set tree [lrange $tree 0 end-1]
+}
+
+# contextmatch --
+#
+#	Match on the context in the XML parse
+#
+# Parameters:
+#	what - Dictionary whose keys are contexts and whose values
+#	       are scripts. Each context is a list of element tags;
+#	       the context must match the righmost part of the path
+#	       to the current element.
+#
+# Side effects:
+#	Whatever the matching scripts do.
+
+proc contextmatch {what} {
+    variable tree
+    set l [expr {[llength $tree] - 1}]
+    foreach {pattern script} $what {
+	set i [expr {[llength $pattern] - 1}]
+	if {$i <= $l} {
+	    set ok 1
+	    for {set j $l} {$ok && $i >= 0} {incr i -1; incr j -1} {
+		if {[lindex $pattern $i] ne [lindex $tree $j]} {
+		    set ok 0
+		}
+	    }
+	    if {$ok} {
+		uplevel 1 $script
+	    }
+	}
+    }
+}
+
+# ### ### ### ######### ######### #########
 
 proc verify_project {} {
     global theproject thepid therepotype
@@ -313,10 +526,8 @@ proc verify_project {} {
     # still seems to provide us with this information directly in the
     # HTML. It is however a page requiring login.
 
-    set tmp [pull-with-cookie-login \
-		 https://sourceforge.net/project/admin/public_info.php?group_id=$thepid \
-		 public_info.html]
-
+    set url  https://sourceforge.net/project/admin/public_info.php?group_id=$thepid
+    set tmp  [pull-with-cookie-login $url public_info.html]
     set data [fileutil::cat $tmp]
 
     set pattern "scm/\\?type=(\[^&\]+)"
@@ -453,6 +664,8 @@ proc login_cookies {} {
 	# We can use this form directly.
 	lappend lines $cookie
     }
+    lappend lines SFUSER=1
+
     set thecookies [list Cookie: [join $lines {;}]]
 
     log Logged in as $theuser
@@ -499,6 +712,11 @@ proc log_progress {token total current} {
 
 proc log_progress_done {msg} {
     puts "\rOK $msg                                     "
+    return
+}
+
+proc log_progress_done_err {msg} {
+    puts "\rERR $msg                                     "
     return
 }
 
