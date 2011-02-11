@@ -1,0 +1,59 @@
+#!/home/aku/opt/ActiveTcl/bin/tclsh8.5
+# -*- tcl -*- \
+exec tclsh "$0" ${1+"$@"}
+
+### ### ### ######### ######### #########
+
+set dst  [file normalize [lindex $argv 0]]
+set argv [lrange $argv 1 end]
+
+puts "Destination = $dst"
+puts "Projects in:  $argv"
+
+### ### ### ######### ######### #########
+
+proc red {text} {
+    return "\[01;37;41m$text\[00m"
+}
+
+proc pull {name url} {
+    global trouble
+    if {[catch {
+	backup $name $url
+    } msg]} {
+	lappend trouble [list [list $name $url] $msg]
+    }
+    return
+}
+
+proc backup {name url} {
+    global dst
+
+    file mkdir $dst
+    cd $dst
+
+    puts "\n[red "Backing up $name @ $url"]......"
+
+    if {![file exists $name.fossil]} {
+	exec fossil clone $url $name.fossil \
+	    2>@ stderr >@ stdout
+    } else {
+	exec fossil pull $url -R $name.fossil \
+	    2>@ stderr >@ stdout
+    }
+    return
+}
+
+### ### ### ######### ######### #########
+
+set trouble {}
+foreach f $argv {
+    source [file normalize $f]
+}
+
+puts ""
+if {[llength $trouble]} {
+    puts [red Troubles]\n\t[join $trouble \n\t]\n
+}
+
+### ### ### ######### ######### #########

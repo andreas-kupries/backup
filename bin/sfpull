@@ -1,0 +1,604 @@
+#!/bin/sh
+# -*- tcl -*- \
+exec tclsh "$0" ${1+"$@"}
+# ### ### ### ######### ######### #########
+## (C) 2009 ActiveState Software Inc.
+#
+## SourceForge Pull (Extract Project information from SourceForge).
+## A ForkLift application
+
+# ### ### ### ######### ######### #########
+## Usage:
+##	sfpull user password project output
+##
+##	Extracts the information of <project> from SourceForge
+##	and stores it in the directory <output>. The application
+##	logs into SourceForge using the given <user/password>
+##      combination, which has to be an administrator of the
+##      <project>.
+
+# ### ### ### ######### ######### #########
+## NOTES ...
+#
+# SourceForge has three ways of authentication ...
+# Really consistent. Not.
+#
+# (1) Project web is 'rsync over ssh' => force password, expect to
+#     intercept to query, user via command line argument.
+#
+# (2) Mailing list archives require url get + basic authentication.
+#
+# (3) xml export of trackers require url + cookies, the latter we get
+#     from submitting the SF login form.
+
+# ### ### ### ######### ######### #########
+## Requisites
+
+package require Expect           ; # ssh password interaction
+package require base64           ; # (Tcllib) Encoding for basic authentication.
+package require fileutil         ; # (Tcllib) Helper for rsync over ssh, temp ssh config.
+package require http 2.7         ; # (Core) Retrieve urls, post forms ...
+package require textutil::adjust ; # (Tcllib) support for json generator code
+package require tls              ; # Secure connections (https).
+package require autoproxy
+
+
+#puts [package ifneeded http [package present http]]
+#proc http::Log {args} { puts HTTP:\ [join $args] }
+
+# ### ### ### ######### ######### #########
+
+proc main {} {
+    initialize;# Required for verify_project, in the commandline.
+    if {![commandline]} usage
+    save_config \
+	[pull_tracker] \
+	[pull_mailinglists] \
+	[pull_website] \
+	[pull_repository]
+    return
+}
+
+proc commandline {} {
+    global argv
+    if {[llength $argv] != 4} { return 0 }
+
+    global theuser        ; set theuser        [lindex $argv 0]
+    global thepassword    ; set thepassword    [lindex $argv 1]
+    global theproject     ; set theproject     [lindex $argv 2]
+    global thedestination ; set thedestination [lindex $argv 3]
+
+    if {$theuser        eq {}} { return 0 }
+    if {$thepassword    eq {}} { return 0 }
+    if {$theproject     eq {}} { return 0 }
+    if {$thedestination eq {}} { return 0 }
+
+    verify_project
+    return 1
+}
+
+proc usage {} {
+    global argv0
+    puts stderr "Usage: $argv0 user password project outputdir"
+    exit 1
+}
+
+# ### ### ### ######### ######### #########
+
+proc initialize {} {
+    #autoproxy::init localhost:8080
+    http::register https 443 tls::socket
+    # Fake SF into believing that an actual browser is talking to it.
+    http::config -useragent {Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13}
+    return
+}
+
+proc save_config {tracker mlists website repository} {
+    # tracker    = name of the tracker XML file
+    # website    = name of the website directory, if any.
+    # repository = name of repository directory.
+    # mlists ... = lists containing the names of all project mailing
+    #              lists, if any.
+
+    global thedestination theproject thepid therepotype theuser
+
+    set tmp {}
+    foreach {name archive} $mlists {
+	lappend tmp $name [JsonString $archive]
+    }
+    set mlists $tmp
+
+    file mkdir $thedestination
+    array set config { aligned 1 indented 1 }
+    fileutil::writeFile $thedestination/Configuration \
+	[JsonObject \
+	     configuration-version [JsonString 1] \
+	     project        [JsonString $theproject] \
+	     origin         [JsonString SourceForge] \
+	     origin-url     [JsonString http://sourceforge.net/projects/$theproject] \
+	     origin-id      [JsonString $thepid] \
+	     exporter       [JsonString $theuser] \
+	     tracker        [JsonString $tracker] \
+	     mailinglists   [JsonObjectDict $mlists] \
+	     website        [JsonString $website] \
+	     repository     [JsonObject \
+				 type  [JsonString $therepotype] \
+				 where [JsonString $repository] \
+				] \
+	     ]\n
+    return
+}
+
+proc pull_tracker {} {
+    global thepid
+
+    log Retrieving tracker information...
+
+    set src https://sourceforge.net/export/xml_export2.php?group_id=$thepid
+    set dst Trackers.xml
+
+    pull-with-cookie-login $src $dst
+
+    return $dst
+}
+
+proc pull_mailinglists {} {
+    global thepid
+
+    log Retrieving mailing list archives...
+
+    set token [http::geturl \
+		   http://sourceforge.net/mail/?group_id=$thepid]
+
+    #puts [http::data $token]
+
+    set pattern "forum.php\\?forum_name=(\[^\"\]+)"
+    set matches [regexp -all -inline -- $pattern [http::data $token]]
+    http::cleanup $token
+
+    set mlists {}
+    foreach {dummy listname} $matches {
+	lappend mlists $listname
+    }
+
+    set archives {}
+    foreach listname [lsort -unique $mlists] {
+	log "\t* $listname"
+
+	set src https://lists.sourceforge.net/mbox/$listname
+	set dst Mailinglists/$listname.mbox
+
+	pull-with-basic-login $src $dst
+
+	lappend archives $listname $dst
+    }
+
+    return $archives
+}
+
+proc pull_website {} {
+    global theproject theuser thepassword thedestination
+
+    # And a third way of doing authentication, now using SSH. We use a
+    # temp config file to force ssh to use password authentication,
+    # and then use Expect to intercept the pty and supply the password
+    # when ssh asks for it..
+
+    log Retrieving website...
+
+    set config [dest SSH] ;#[fileutil::tempfile]
+    fileutil::writeFile $config \
+	PreferredAuthentications=password\n
+
+    # Note that the trailing /'es added in the rsync invokation are
+    # required. They ensure that the website destination directory is
+    # htdocs, instead of containing a sub-directory named htdocs.
+    set src ${theuser},${theproject}@web.sourceforge.net:htdocs
+    set dst Website
+
+    file mkdir $thedestination
+
+    # No logging of the interaction.
+    # Spawn rsync over ssh.
+    # Wait for the password query, then supply the password, at last
+    # let rsync run. We suppress the output, but drive a barber
+    # pole for each line we get.
+
+    set cmd [list exp_spawn rsync -avP -e [list ssh -F $config] $src/ [dest $dst/]]
+
+    # An issue here may be caused by outdated SSH keys, 
+    #log $cmd
+
+    exp_log_user 0
+    eval $cmd
+    expect {
+	"password: " {}
+	"REMOTE HOST IDENTIFICATION HAS CHANGED" {
+	    log {Please fix your known_hosts file}
+	    log {Remove the entry for web.sourceforge.net}
+	    exit
+	}
+	"Are you sure you want to continue connecting" {
+	    log {We are sure...}
+	    exp_send yes\r
+	}
+    }
+    log {Sending password...}
+    exp_send  $thepassword\r
+    log_barber_pole_start
+    expect {
+	"*\r" {
+	    log_barber_pole
+	    exp_continue
+	}
+	eof {}
+    }
+    log_barber_pole_done
+
+    # Get rid of the temp configuration.
+    file delete $config
+    return $dst
+}
+
+proc pull_repository {} {
+    global therepotype theproject thedestination
+
+    log Retrieving project $therepotype repository...
+
+    # Note: This is the only part of the project where no
+    # authentication is required. I.e. this is something anybody can
+    # do, for any project.
+
+    if {$therepotype eq "svn"} {
+	set root $therepotype
+    } else {
+	# cvs, hg, git, bzr
+	set root ${therepotype}root
+    }
+
+    set src ${theproject}.${therepotype}.sourceforge.net::$root/$theproject/*
+    set dst Repository
+
+    file mkdir $thedestination
+
+    log_barber_pole_start
+    exp_log_user 0
+    exp_spawn rsync -avP $src $thedestination/$dst
+    expect {
+	"*\r" {
+	    log_barber_pole
+	    exp_continue
+	}
+	eof {}
+    }
+    log_barber_pole_done
+    return $dst
+}
+
+# ### ### ### ######### ######### #########
+
+proc verify_project {} {
+    global theproject thepid therepotype
+
+    set url http://sourceforge.net/projects/$theproject/
+
+    puts "Get project id of $url..."
+
+    set token [http::geturl $url]
+    set data  [http::data $token]
+    http::cleanup $token
+
+    if {[regexp {Invalid Project} $data]} {
+	log "Project $theproject = INVALID"
+	log "I.e. sourceForge claims that it doesn't know this name."
+	log "Please check your spelling."
+	exit
+    }
+
+    #puts <$data>
+
+    set pattern "group_id=(\[0-9\]+)"
+    if {![regexp $pattern $data -> thepid]} {
+	log "Project $theproject : Unable to determine pid"
+	puts $data
+	return -code error FAIL/id
+    }
+
+    puts "Get repository type of project $thepid..."
+
+    # Supported repository types: cvs, svn, hg, git, bzr.
+
+    # In the main page the repository type is hidden somewhere within
+    # a javascript which is loaded later. The public_info page however
+    # still seems to provide us with this information directly in the
+    # HTML. It is however a page requiring login.
+
+    set tmp [pull-with-cookie-login \
+		 https://sourceforge.net/project/admin/public_info.php?group_id=$thepid \
+		 public_info.html]
+
+    set data [fileutil::cat $tmp]
+
+    set pattern "scm/\\?type=(\[^&\]+)"
+    if {![regexp $pattern $data -> therepotype]} {
+	log "Project $theproject : Unable to determine repository type"
+	return -code error FAIL/type
+    }
+
+    log "Project $theproject = $thepid ($therepotype)"
+    return
+}
+
+proc pull-with-cookie-login {url file} {
+    global thedestination
+
+    variable thecookies
+
+    set dst  $thedestination/$file
+    set tmp  [fileutil::tempfile]
+
+    # The login credentials are transmitted indirectly, through us
+    # having the cookie returned by the login form we submitted (see
+    # the procedure mauve::login where this is done).
+
+    # Using protocol 1.0 disables chunked transfer, something SF will
+    # do for 1.1, and which http doesn't handle properly for -channel.
+
+    log_progress_start
+
+    set chan  [open $tmp w]
+    set token [http::geturl $url \
+		   -protocol 1.0 \
+		   -channel $chan \
+		   -headers [login_cookies] \
+		   -progress log_progress]
+    log_progress_done [file size $tmp]
+
+    http::wait    $token
+    http::cleanup $token
+    close $chan
+
+    file mkdir [file dirname $dst]
+    #file copy -force $tmp $dst
+    file rename -force $tmp $dst
+
+    return $dst
+}
+
+proc pull-with-basic-login {url file} {
+    global thedestination theuser thepassword
+
+    set dst $thedestination/$file
+    set tmp [fileutil::tempfile]
+
+    # Here the login credentials are transmitted through 'Basic' http
+    # authentication.
+
+    # Using protocol 1.0 disables chunked transfer, something SF will
+    # do for 1.1, and which http doesn't handle properly for -channel.
+
+    log_progress_start
+
+    set chan [open $tmp w]
+    fconfigure $chan -encoding binary -translation binary
+
+    # The transfer is configured binary to avoid problems if a mail
+    # contains a bogus encoding (spam), tripping the core (invalid
+    # argument during a write, improper character, 7MB into a 48 MB
+    # file. tcl-core mail archive triggered this).
+
+    #log Using $theuser:$thepassword
+    #log Using [list Authorization [concat "Basic" [base64::encode $theuser:$thepassword]]]
+
+    set token [http::geturl $url \
+		   -binary 1 \
+		   -protocol 1.0 \
+		   -channel $chan \
+		   -headers [list Authorization \
+				 [concat "Basic" \
+				      [base64::encode $theuser:$thepassword]]] \
+		   -progress log_progress]
+    log_progress_done [file size $tmp]
+
+    http::wait    $token
+    http::cleanup $token
+    close $chan
+
+    file mkdir [file dirname $dst]
+    file rename -force $tmp $dst
+    return
+}
+
+# ### ### ### ######### ######### #########
+
+proc login_cookies {} {
+    global thecookies
+    if {[info exists thecookies] && [llength $thecookies]} {
+	puts {Cached cookies...}
+	return $thecookies
+    }
+
+    global theproject theuser thepassword
+
+    # Run the sourceforge authentication form.
+    set url https://sourceforge.net/account/login.php
+
+    # form_loginname = user
+    # form_pw        = password
+    # login          = The submit button.
+
+    set query [http::formatQuery \
+			       form_loginname $theuser \
+			       form_pw        $thepassword \
+			       login          {Log in}]
+
+    #puts Q($query)
+
+    set token [http::geturl $url \
+		   -query $query]
+    #set meta [http::meta $token]
+
+    #puts RESPONSE_____________________________________________
+    #parray $token
+    #puts _____________________________________________________
+
+    set meta [set ${token}(meta)]
+    http::cleanup $token
+
+    set lines {}
+    foreach {k v} $meta {
+	if {$k ne "Set-Cookie"} continue
+	set cookie [lindex [split $v {;}] 0]
+	# Cookie is in the form of 'k=v'.
+	# We can use this form directly.
+	lappend lines $cookie
+    }
+    set thecookies [list Cookie: [join $lines {;}]]
+
+    log Logged in as $theuser
+    #log $thecookies
+    return $thecookies
+}
+
+# ### ### ### ######### ######### #########
+## Helper. Interface to log output and progress bars.
+
+proc log {args} {
+    puts [join $args]
+    return
+}
+
+proc log_barber_pole_start {} {
+    global thepole
+    set    thepole {*   *   *   }
+    return
+}
+
+proc log_barber_pole {} {
+    global thepole
+    puts -nonewline \r$thepole
+    flush stdout
+    set thepole [string range $thepole 1 end][string index $thepole 0]
+    return
+}
+
+proc log_barber_pole_done {} {
+    puts "\rOK                                           "
+    return
+}
+
+proc log_progress_start {} {}
+
+proc log_progress {token total current} {
+    if {$total == 0} { set total ??? }
+
+    puts -nonewline \r$current/$total
+    flush stdout
+    return
+}
+
+proc log_progress_done {msg} {
+    puts "\rOK $msg                                     "
+    return
+}
+
+proc dest {path} {
+    global thedestination
+    file mkdir $thedestination
+    return [file join $thedestination $path]
+}
+
+# ### ### ### ######### ######### #########
+## Helper code to generate JSON structures.
+## Snarfed from Tcllib, the json export plugins for
+## doctools2{idx,toc},
+##
+## Expects an array variable 'config' in the caller, containing the
+## keys 'aligned' and 'indented' (Bboth mapping to a boolean value).
+
+proc JsonQuotes {} {
+    return [list "\"" "\\\"" / \\/ \\ \\\\ \b \\b \f \\f \n \\n \r \\r \t \\t]
+}
+
+proc JsonString {s} {
+    return "\"[string map [JsonQuotes] $s]\""
+}
+
+proc JsonArray {args} {
+    upvar 1 config config
+    return [JsonArrayList $args]
+}
+
+proc JsonArrayList {list} {
+    # compact form.
+    return "\[[join $list ,]\]"
+}
+
+proc JsonObject {args} {
+    upvar 1 config config
+    return [JsonObjectDict $args]
+}
+
+proc JsonObjectDict {dict} {
+    # The dict maps string keys to json-formatted data. I.e. we have
+    # to quote the keys, but not the values, as the latter are already
+    # in the proper format.
+    upvar 1 config config
+
+    set tmp {}
+    foreach {k v} $dict { lappend tmp [JsonString $k] $v }
+    set dict $tmp
+
+    if {$config(aligned)} { Align $dict max }
+
+    if {$config(indented)} {
+	set content {}
+	foreach {k v} $dict {
+	    if {$config(aligned)} { set k [FmtR max $k] }
+	    if {[string match *\n* $v]} {
+		# multi-line value
+		lappend content "    $k : [textutil::adjust::indent $v {    } 1]"
+	    } else {
+		# single line value.
+		lappend content "    $k : $v"
+	    }
+	}
+	if {[llength $content]} {
+	    return "\{\n[join $content ,\n]\n\}"
+	} else {
+	    return "\{\}"
+	}
+    } else {
+	# ultra compact form.
+	set tmp {}
+	foreach {k v} $dict { lappend tmp "$k:$v" }
+	return "\{[join $tmp ,]\}"
+    }
+}
+
+proc Align {dict mv} {
+    upvar 1 $mv max
+    # Generate a list of references sortable by name, and also find the
+    # max length of all relevant names.
+    set max 0
+    foreach {str _} $dict { Max max $str }
+    return
+}
+
+proc Max {v str} {
+    upvar 1 $v max
+    set x [string length $str]
+    if {$x <= $max} return
+    set max $x
+    return
+}
+
+proc FmtR {v str} {
+    upvar 1 $v max
+    return $str[string repeat { } [expr {$max - [string length $str]}]]
+}
+
+# ### ### ### ######### ######### #########
+
+main
+exit

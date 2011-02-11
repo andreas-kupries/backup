@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Get access to commands in non-standard paths.
+#PATH=":$PATH"
+#export PATH
+
+here=$(dirname "$0")
+base=$(dirname "$here")
+data="$base/data"
+etc="$base/etc"
+log="$base/log"
+bin="$base/bin"
+
+user=YOUR_SF_ACCOUNT
+password=YOUR_SF_PASSWORD
+
+rm "$log/pullsf.log"
+for project in $(cat "$etc/pullsf")
+do
+    echo $project ...
+    "$bin/sfpull" "$user" "$password" "$project" "$data/pullsf/$project" >> "$log/pullsf.log" 2>&1
+    chown -R aku.aku "$data/pullsf/$project"
+    chmod -R ugo+rw  "$data/pullsf/$project"
+done

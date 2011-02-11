@@ -1,0 +1,76 @@
+#!/home/aku/opt/ActiveTcl/bin/tclsh8.5
+# -*- tcl -*- \
+exec tclsh "$0" ${1+"$@"}
+
+### ### ### ######### ######### #########
+
+set dst  [file normalize [lindex $argv 0]]
+set argv [lrange $argv 1 end]
+
+puts "Destination = $dst"
+puts "Projects in:  $argv"
+
+### ### ### ######### ######### #########
+
+proc red {text} {
+    return "\[01;37;41m$text\[00m"
+}
+
+proc pull {name url} {
+    global trouble
+    if {[catch {
+	backup $name $url
+    } msg]} {
+	lappend trouble [list [list $name $url] $msg]
+    }
+    return
+}
+
+proc do {args} {
+    lappend args 2>@ stderr >@ stdout
+    return [eval [linsert $args 0 exec]]
+}
+
+proc wf {content path} {
+    set chan [open $path w]
+    puts -nonewline $chan $content
+    close $chan
+    return
+}
+
+proc backup {name url} {
+    global dst
+
+    file mkdir $dst
+    cd $dst
+
+    puts "\n[red "Backing up $name @ $url"]......"
+
+    set path [file normalize $name]
+
+    # Setup where necessary
+    if {![file exists $name]} {
+	do svnadmin create $path
+	file mkdir         $path/hooks
+	wf "#!/bin/bash"   $path/hooks/pre-revprop-change
+	do chmod +x        $path/hooks/pre-revprop-change
+	do svnsync init file://$path $url
+    }
+
+    do svnsync sync file://$path
+    return
+}
+
+### ### ### ######### ######### #########
+
+set trouble {}
+foreach f $argv {
+    source [file normalize $f]
+}
+
+puts ""
+if {[llength $trouble]} {
+    puts [red Troubles]\n\t[join $trouble \n\t]\n
+}
+
+### ### ### ######### ######### #########

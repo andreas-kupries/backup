@@ -1,0 +1,71 @@
+#!/home/aku/opt/ActiveTcl/bin/tclsh8.5
+# -*- tcl -*- \
+exec tclsh "$0" ${1+"$@"}
+
+### ### ### ######### ######### #########
+
+set dst  [file normalize [lindex $argv 0]]
+set argv [lrange $argv 1 end]
+
+puts "Destination = $dst"
+puts "Projects in:  $argv"
+
+### ### ### ######### ######### #########
+
+proc red {text} {
+    return "\[01;37;41m$text\[00m"
+}
+
+proc pull {name {rtype cvs}} {
+    global trouble
+    if {[catch {
+	backup $name $rtype
+    } msg]} {
+	lappend trouble [list [list $name $rtype] $msg]
+    }
+    return
+}
+
+proc backup {name rtype} {
+    global dst
+
+    puts "\n[red "Backing up $rtype $name"]......"
+
+    file mkdir $dst
+    cd $dst
+    file mkdir $name
+    cd         $name
+
+    # Known rtypes supported by sourceforge through their rsync service.
+    # - cvs
+    # - svn
+    # - git
+    # - hg  (mercurial)
+    # - bzr (bazaar)
+    # Information from
+    # https://sourceforge.net/apps/trac/sourceforge/wiki#HostingwithSourceForge.net
+    # (See the SCM line, and links).
+
+    switch -exact -- $rtype {
+	svn     { set root $rtype }
+	default { set root ${rtype}root }
+    }
+
+    exec rsync -av rsync://${name}.${rtype}.sourceforge.net/${root}/${name}/* . \
+	2>@ stderr >@ stdout
+    return
+}
+
+### ### ### ######### ######### #########
+
+set trouble {}
+foreach f $argv {
+    source [file normalize $f]
+}
+
+puts ""
+if {[llength $trouble]} {
+    puts [red Troubles]\n\t[join $trouble \n\t]\n
+}
+
+### ### ### ######### ######### #########
