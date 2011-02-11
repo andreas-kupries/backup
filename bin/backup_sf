@@ -16,25 +16,36 @@ proc red {text} {
     return "\[01;37;41m$text\[00m"
 }
 
-proc pull {name {rtype cvs}} {
+proc pull {name args} {
     global trouble
+    if {![llength $args]} { set args cvs }
+    if {[llength $args] > 1} {
+        foreach rtype $args {
+            do $name $rtype -$rtype
+        }
+    } else {
+        do $name [lindex $args 0] "" 
+    }
+    return
+}
+
+proc do {name rtype suffix} {
     if {[catch {
-	backup $name $rtype
+	backup $name $rtype $suffix
     } msg]} {
 	lappend trouble [list [list $name $rtype] $msg]
     }
     return
 }
 
-proc backup {name rtype} {
+proc backup {name rtype suffix} {
     global dst
 
     puts "\n[red "Backing up $rtype $name"]......"
 
-    file mkdir $dst
     cd $dst
-    file mkdir $name
-    cd         $name
+    file mkdir $name$suffix
+    cd         $name$suffix
 
     # Known rtypes supported by sourceforge through their rsync service.
     # - cvs
