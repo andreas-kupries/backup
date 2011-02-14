@@ -1,0 +1,5 @@
+# -*- tcl -*- Hg repositories to backup
+
+pull twapi30	http://twapi.hg.sourceforge.net:8000/hgroot/twapi/twapi30
+pull twapi	http://twapi.hg.sourceforge.net:8000/hgroot/twapi/twapi
+pull naviserver	https://bitbucket.org/naviserver/naviserver
