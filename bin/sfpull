@@ -55,7 +55,7 @@ proc main {} {
 	[pull_attachments [pull_tracker]] \
 	[pull_mailinglists] \
 	[pull_website] \
-	[pull_repository]
+	[pull_repositories]
     return
 }
 
@@ -100,7 +100,7 @@ proc save_config {tracker mlists website repository} {
     # mlists ... = lists containing the names of all project mailing
     #              lists, if any.
 
-    global thedestination theproject thepid therepotype theuser
+    global thedestination theproject thepid therepotypes theuser
 
     foreach {tracker attachments} $tracker break
 
@@ -112,6 +112,23 @@ proc save_config {tracker mlists website repository} {
 
     file mkdir $thedestination
     array set config { aligned 1 indented 1 }
+
+    if {[llength $therepotypes] == 1} {
+	set repository [JsonObject \
+			    type  [JsonString [lindex $therepotypes 0]] \
+			    where [JsonString $repository]]
+    } elseif {[llength $therepotypes]} {
+	set dict {}
+	foreach r $therepotypes {
+	    lappend dict $r [JsonString $repository/$r]
+	}	
+	set repository [JsonObject \
+			    types [JsonString $therepotypes] \
+			    where [JsonObjectDict $dict]]
+    } else {
+	set repository {}
+    }
+
     fileutil::writeFile $thedestination/Configuration \
 	[JsonObject \
 	     configuration-version [JsonString 1] \
@@ -124,10 +141,7 @@ proc save_config {tracker mlists website repository} {
 	     attachments    [JsonString $attachments] \
 	     mailinglists   [JsonObjectDict $mlists] \
 	     website        [JsonString $website] \
-	     repository     [JsonObject \
-				 type  [JsonString $therepotype] \
-				 where [JsonString $repository] \
-				] \
+	     repository     $repository \
 	     ]\n
     return
 }
@@ -307,26 +321,41 @@ proc pull_website {} {
     return $dst
 }
 
-proc pull_repository {} {
-    global therepotype theproject thedestination
+proc pull_repositories {} {
+    global therepotypes
 
-    log Retrieving project $therepotype repository...
+    set dst Repository
+
+    if {[llength $therepotypes] == 1} {
+	pull_repository [lindex $therepotypes 0] $dst
+    } else {
+	foreach t $therepotypes {
+	    pull_repository $t $dst/$t
+	}
+    }
+
+    return $dst
+}
+
+proc pull_repository {type dst} {
+    global theproject thedestination
+
+    log Retrieving project $type repository...
 
     # Note: This is the only part of the project where no
     # authentication is required. I.e. this is something anybody can
     # do, for any project.
 
-    if {$therepotype eq "svn"} {
-	set root $therepotype
+    if {$type eq "svn"} {
+	set root $type
     } else {
 	# cvs, hg, git, bzr
-	set root ${therepotype}root
+	set root ${type}root
     }
 
-    set src ${theproject}.${therepotype}.sourceforge.net::$root/$theproject/*
-    set dst Repository
+    set src ${theproject}.${type}.sourceforge.net::$root/$theproject/*
 
-    file mkdir $thedestination
+    file mkdir [file dirname $thedestination/$dst]
 
     log_barber_pole_start
     exp_log_user 0
@@ -491,7 +520,7 @@ proc contextmatch {what} {
 # ### ### ### ######### ######### #########
 
 proc verify_project {} {
-    global theproject thepid therepotype
+    global theproject thepid therepotypes
 
     set url http://sourceforge.net/projects/$theproject/
 
@@ -531,12 +560,19 @@ proc verify_project {} {
     set data [fileutil::cat $tmp]
 
     set pattern "scm/\\?type=(\[^&\]+)"
-    if {![regexp $pattern $data -> therepotype]} {
-	log "Project $theproject : Unable to determine repository type"
-	return -code error FAIL/type
+    set therepotypes {}
+    foreach line [split $data \n] {
+	if {![regexp $pattern $line -> repotype]} continue
+	if {[regexp disabled $line]} continue
+	lappend therepotypes $repotype
     }
 
-    log "Project $theproject = $thepid ($therepotype)"
+    if {![llength $therepotypes]} {
+	log "Project $theproject = $thepid (WARNING No repositories found)"
+	#return -code error FAIL/type
+    }
+
+    log "Project $theproject = $thepid ($therepotypes)"
     return
 }
 
