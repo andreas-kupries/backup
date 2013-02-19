@@ -1,15 +1,17 @@
 # -*- tcl -*- Git repositories to backup for ActiveState's use.
-pull tdom         https://github.com/tDOM/tdom.git
-pull jimtcl       http://repo.or.cz/w/jimtcl.git
-pull tcl.gd       https://github.com/lehenbauer/tcl.gd.git
-pull tclspline    https://github.com/lehenbauer/tclspline.git
-pull speedtables  https://github.com/lehenbauer/speedtables.git
-pull speedbag     https://github.com/lehenbauer/speedbag.git
-pull tclbsd       https://github.com/lehenbauer/tclbsd.git
-pull diffutiltcl  https://github.com/pspjuth/DiffUtilTcl.git
-pull tmag         https://github.com/makr/tmag.git
 pull TclTweezer   https://github.com/flightaware/TclTweezer.git
 pull as-tcl-core  https://github.com/ActiveState/tcl-core.git
 pull das-tcl-core https://github.com/das/tcl.git
-pull partcl       https://github.com/partcl/partcl.git
+pull diffutiltcl  https://github.com/pspjuth/DiffUtilTcl.git
+pull jimtcl       http://repo.or.cz/w/jimtcl.git
 pull llvmtcl      https://github.com/jdc8/llvmtcl.git
+pull partcl       https://github.com/partcl/partcl.git
+pull speedbag     https://github.com/lehenbauer/speedbag.git
+pull speedtables  https://github.com/lehenbauer/speedtables.git
+pull tcl-tna      https://github.com/jbroll/tcl-tna.git
+pull tcl.gd       https://github.com/lehenbauer/tcl.gd.git
+pull tclbsd       https://github.com/lehenbauer/tclbsd.git
+pull tclcloud     https://github.com/cloudsidekick/tclcloud.git
+pull tclspline    https://github.com/lehenbauer/tclspline.git
+pull tdom         https://github.com/tDOM/tdom.git
+pull tmag         https://github.com/makr/tmag.git

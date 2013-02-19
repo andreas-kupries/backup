@@ -1,13 +1,15 @@
-pull tclws    http://tclws.googlecode.com/svn
-pull wub      http://wub.googlecode.com/svn
-pull wubwikit http://wubwikit.googlecode.com/svn
-pull wikitcl  http://wikitcl.googlecode.com/svn
-pull wubchain http://wubchain.googlecode.com/svn
-pull tcc      http://tcltcc.googlecode.com/svn
-pull tclkit   http://tclkit.googlecode.com/svn
-pull tclxmpp  http://tclxmpp.googlecode.com/svn
-pull tclgpg   http://tclgpg.googlecode.com/svn
+# -*- tcl -*- SVN repositories to backup
+#pull critcl   svn://svn.equi4.com/
 pull deskml   http://deskml.googlecode.com/svn
-pull ureversi http://ureversi.googlecode.com/svn
+pull tcc      http://tcltcc.googlecode.com/svn
+pull tcl-hwloc http://tcl-hwloc.googlecode.com/svn
+pull tclgpg   http://tclgpg.googlecode.com/svn
 pull tcljs    http://tcljs.googlecode.com/svn
-pull critcl   svn://svn.equi4.com/
+pull tclkit   http://tclkit.googlecode.com/svn
+pull tclws    http://tclws.googlecode.com/svn
+pull tclxmpp  http://tclxmpp.googlecode.com/svn
+pull ureversi http://ureversi.googlecode.com/svn
+pull wikitcl  http://wikitcl.googlecode.com/svn
+pull wub      http://wub.googlecode.com/svn
+pull wubchain http://wubchain.googlecode.com/svn
+pull wubwikit http://wubwikit.googlecode.com/svn

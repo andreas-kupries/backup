@@ -1,16 +1,16 @@
 # -*- tcl -*- Fossil repositories to backup for ActiveState's use.
-pull fossil       http://www.fossil-scm.org
-pull sqlite       http://sqlite.org/src
-pull tdbc         http://kbk.is-a-geek.net:2301/index
-pull tdbc         http://tdbc.tcl.tk/index.cgi/index
-pull tdbc         http://core.tcl.tk/tdbc
-pull tdbc         http://mirror1.tcl.tk/tdbc
+pull backup       http://chiselapp.com/user/andreas_kupries/repository/Backup
 pull crimp	  http://chiselapp.com/user/andreas_kupries/repository/crimp
 pull critcl       http://chiselapp.com/user/andreas_kupries/repository/CriTcl
-pull backup       http://chiselapp.com/user/andreas_kupries/repository/Backup
+pull fossil       http://www.fossil-scm.org
+pull sqlite       http://sqlite.org/src
 pull tcl          http://core.tcl.tk/tcl
 pull tcl          http://mirror1.tcl.tk/tcl
-pull tk           http://core.tcl.tk/tk
-pull tk           http://mirror1.tcl.tk/tk
 pull tclws        http://core.tcl.tk/tclws
 pull tclws        http://mirror1.tcl.tk/tclws
+pull tdbc         http://core.tcl.tk/tdbc
+pull tdbc         http://kbk.is-a-geek.net:2301/index
+pull tdbc         http://mirror1.tcl.tk/tdbc
+pull tdbc         http://tdbc.tcl.tk/index.cgi/index
+pull tk           http://core.tcl.tk/tk
+pull tk           http://mirror1.tcl.tk/tk
